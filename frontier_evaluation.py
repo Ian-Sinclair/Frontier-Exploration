@@ -19,6 +19,7 @@ import sys
 import math
 from actionlib_msgs.msg import GoalStatus
 from util import *
+import random
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -33,6 +34,7 @@ class frontierEvaluation():
     frontier_markers = None
     centroids = None
     goalPos = None
+    grid = None
     
     def __init__(self):
         """
@@ -147,9 +149,9 @@ class frontierEvaluation():
             self.client.send_goal(goal)
             #self.client.wait_for_result()
         except:
-            raise
             print("tf listener didn't work")
             rospy.Rate(10.0).sleep()
+            raise
 
 
         #return goal
@@ -253,7 +255,25 @@ class frontierEvaluation():
             (x+1, y-1), (x+2, y-1), (x+3, y-1), (x+1, y-2), (x+2, y-2), (x+3, y-2),
             (x+1, y-3), (x+2, y-3), (x+3, y-3)
         ]
-        
+
+        for i in range(9):
+            if grid[x+i][y] == 100:
+                return False
+            if grid[x-i][y] == 100:
+                return False
+            if grid[x][y+i] == 100:
+                return False
+            if grid[x][y-i] == 100:
+                return False
+        return True
+    
+    def findPoint(self, x, y, grid):
+        for i in range(5):
+            rx = random.randint(1, 20)
+            ry = random.randint(1, 20)
+            if self.habitability(rx, ry, grid):
+                return (rx, ry)
+        return None
     
     def main_program(self):
         #To keep program running
@@ -276,9 +296,9 @@ class frontierEvaluation():
             #if type(frontierEvaluation.frontiersGrid) != type(None):
 #            goalPoint = (frontierEvaluation.cache.iloc[0]["centroid_x"], frontierEvaluation.cache.iloc[0]["centroid_y"], 30)
             goalPoint = (goals[0][0], goals[0][1], 30)
-            goalPoint = getPointArray([goalPoint], frontierEvaluation.occ_grid)[0]
+#            goalPoint = getPointArray([goalPoint], frontierEvaluation.occ_grid)[0]
  #           print(goalPoint)
-            goalMarker = createMarkers(points=[goalPoint], indx=200, action=0, ns="goal_marker", color=[255, 0, 0], scale=0.3, style=7)
+ #           goalMarker = createMarkers(points=[goalPoint], indx=200, action=0, ns="goal_marker", color=[255, 0, 0], scale=0.3, style=7)
 #            frontierEvaluation.centroids.markers.append(goalMarker)
 
                # self.visualizeFrontiers(frontierEvaluation.frontiersGrid, frontierEvaluation.occ_grid.header, frontierEvaluation.occ_grid.info)
@@ -288,7 +308,18 @@ class frontierEvaluation():
 
             #Sending goal:
             print("sending goal...")
-            self.coordinate_callback_thread(goalPoint.x, goalPoint.y, goalPoint.z)
+            if self.habitability(goalPoint.x, goalPoint.y, frontierEvaluation.grid):
+                goalPoint = getPointArray([goalPoint], frontierEvaluation.occ_grid)[0]
+                self.coordinate_callback_thread(goalPoint[0], goalPoint[1], goalPoint[2])
+            else:
+                #Find a habitable point
+                x, y = self.findPoint(goalPoint.x, goalPoint.y, frontierEvaluation.grid)
+                if x:
+                    goalPoint = getPointArray([goalPoint], frontierEvaluation.occ_grid)[0]
+                    self.coordinate_callback_thread(goalPoint.x, goalPoint.y, goalPoint.z)
+                else:
+                    print("Goal is unreachable. ")
+                    goals.pop(0)
 
             #Waiting for result
             result = None
@@ -344,16 +375,16 @@ class frontierEvaluation():
         if self.compareGrid(frontierEvaluation.curr_grid, occupancy_grid.data):
             frontierEvaluation.curr_grid = occupancy_grid.data
             print("setting up")
-            grid = formatGrid(occupancy_grid)
+            frontierEvaluation.grid = formatGrid(occupancy_grid)
 
             locs = getObjects(grid)
-            grid = grow(grid, locs)
+            frontierEvaluation.grid = grow(grid, locs)
             frontierEvaluation.locs = getObjects(grid)
  #           points = getPointArray(locs, occupancy_grid)
 #            markers = createMarkers(points=points, indx=50, action=0, ns="objects", scale=0.03)
 #            self.pub.publish(markers)
 
-            frontierEvaluation.frontiersGrid = findFrontiers(grid)
+            frontierEvaluation.frontiersGrid = findFrontiers(frontierEvaluation.grid)
            # header = occupancy_grid.header
            # info = occupancy_grid.info
            # self.visualizeFrontiers(frontiersGrid, header, info)
