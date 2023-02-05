@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import sys
 import math
+from actionlib_msgs.msg import GoalStatus
 from util import *
 import warnings
 warnings.filterwarnings("ignore")
@@ -32,6 +33,7 @@ class frontierEvaluation():
     frontier_markers = None
     centroids = None
     goalPos = None
+    
     def __init__(self):
         self.init_node()
         self.init_action_client()
@@ -39,7 +41,6 @@ class frontierEvaluation():
         self.init_publishers()
         self.init_subscriber()
         self.main_program()
- #       self.main_program()
     
     def init_node(self):
         rospy.init_node("explorer")
@@ -69,7 +70,7 @@ class frontierEvaluation():
         self.client.wait_for_server()
     
     def coordinate_callback_thread(self, x, y, z):
-
+        tol = 0.5
      #   dx = abs(x-frontierEvaluation.pos.position.x)
       #  dy = abs(y-frontierEvaluation.pos.position.y)
       #  d = math.sqrt(dx**2 + dy**2)
@@ -79,8 +80,8 @@ class frontierEvaluation():
         try:
             pose = Pose()
 
-            pose.position.x = x
-            pose.position.y = y
+            pose.position.x = x+tol
+            pose.position.y = y+tol
             pose.position.z = z
             pose.orientation.w = 1.0
 
@@ -191,23 +192,54 @@ class frontierEvaluation():
             return False
         return True
     
+    
+    def habitability(self, x, y, grid):
+        centroid = (x,y)
+        top = [
+            (x-3, y+3), (x-2, y+3), (x-1, y+3), (x, y+3), (x+1, y+3), (x+2, y+3), (x+3, y+3),
+            (x-3, y+2), (x-2, y+2), (x-1, y+2), (x, y+2), (x+1, y+2), (x+2, y+2), (x+3, y+2),
+            (x-3, y+1), (x-2, y+1), (x-1, y+1), (x, y+1), (x+1, y+1), (x+2, y+1), (x+3, y+1)
+            ]
+        bottom = [
+            (x-3, y-3), (x-2, y-3), (x-1, y-3), (x, y-3), (x+1, y-3), (x+2, y-3), (x+3, y-3),
+            (x-3, y-2), (x-2, y-2), (x-1, y-2), (x, y-2), (x+1, y-2), (x+2, y-2), (x+3, y-2),
+            (x-3, y-1), (x-2, y-1), (x-1, y-1), (x, y-1), (x+1, y-1), (x+2, y-1), (x+3, y-1)
+        ]
+        left = [
+            (x-3, y+3), (x-2, y+3), (x-1, y+3), (x-3, y+2), (x-2, y+2), (x-1, y+2),
+            (x-3, y+1), (x-2, y+1), (x-1, y+1), (x-3, y), (x-2, y), (x-1, y),
+            (x-3, y-1), (x-2, y-1), (x-1, y-1), (x-3, y-2), (x-2, y-2), (x-1, y-2),
+            (x-3, y-3), (x-2, y-3), (x-1, y-3)
+        ]
+        right = [
+            (x+1, y+3), (x+2, y+3), (x+3, y+3), (x+1, y+2), (x+2, y+2), (x+3, y+2),
+            (x+1, y+1), (x+2, y+1), (x+3, y+1), (x+1, y), (x+2, y), (x+3, y),
+            (x+1, y-1), (x+2, y-1), (x+3, y-1), (x+1, y-2), (x+2, y-2), (x+3, y-2),
+            (x+1, y-3), (x+2, y-3), (x+3, y-3)
+        ]
+        
+    
     def main_program(self):
         #To keep program running
         while type(frontierEvaluation.frontiersGrid) == type(None) and not rospy.is_shutdown():
             rospy.sleep(1)
-        #Deleting
-        while len(set(frontierEvaluation.cache["cluster"])) > 0 and not rospy.is_shutdown():
+        
+        goals = list(set([(x,y) for x,y in zip(frontierEvaluation.cache["centroid_x"], frontierEvaluation.cache["centroid_y"])]))
+
+#        while len(set(frontierEvaluation.cache["cluster"])) > 0 and not rospy.is_shutdown():
+        while len(goals) > 0 and not rospy.is_shutdown():
             rospy.sleep(1)
 
 
             #Publishing updated obstacles
-            if frontierEvaluation.locs:
-                points = getPointArray(frontierEvaluation.locs, frontierEvaluation.occ_grid)
-                markers = createMarkers(points=points, indx=50, action=0, ns="objects", scale=0.05)
+#            if frontierEvaluation.locs:
+            points = getPointArray(frontierEvaluation.locs, frontierEvaluation.occ_grid)
+            markers = createMarkers(points=points, indx=50, action=0, ns="objects", scale=0.05)
 
             #Publishing frontiers occupancy grid
             #if type(frontierEvaluation.frontiersGrid) != type(None):
-            goalPoint = (frontierEvaluation.cache.iloc[0]["centroid_x"], frontierEvaluation.cache.iloc[0]["centroid_y"], 30)
+#            goalPoint = (frontierEvaluation.cache.iloc[0]["centroid_x"], frontierEvaluation.cache.iloc[0]["centroid_y"], 30)
+            goalPoint = (goals[0][0], goals[0][1], 30)
             goalPoint = getPointArray([goalPoint], frontierEvaluation.occ_grid)[0]
  #           print(goalPoint)
             goalMarker = createMarkers(points=[goalPoint], indx=200, action=0, ns="goal_marker", color=[255, 0, 0], scale=0.3, style=7)
@@ -225,19 +257,37 @@ class frontierEvaluation():
             #Waiting for result
             result = None
             rate = rospy.Rate(1.0)
+            
             while result is None and not rospy.is_shutdown():
+                #Deleting:
                 m = Marker(action=3)
                 self.pub.publish(m)
                 self.centroids_pub.publish(m)
                 mrkrArr = MarkerArray()
                 mrkrArr.markers.append(m)
                 self.frontiers_pub.publish(mrkrArr)
+
                 print("getting result")
+                #Visualizing
+                self.pub.publish(markers)
                 self.visualizeFrontiers(frontierEvaluation.frontiersGrid, frontierEvaluation.occ_grid.header, frontierEvaluation.occ_grid.info)
                 self.frontiers_pub.publish(frontierEvaluation.frontier_markers)
                 self.centroids_pub.publish(frontierEvaluation.centroids)
                 self.centroids_pub.publish(goalMarker)
+                
+                #Getting result
                 result = self.client.get_result()
+
+                if self.client.get_state() == GoalStatus.SUCCEEDED:
+                    rospy.loginfo("Goal found!")
+                    goals.pop(0)
+
+                
+                if self.client.get_state() == GoalStatus.ABORTED:
+                    rospy.loginfo("Can't find goal. Moving to the next frontier.")
+                    goals.pop(0)
+                    continue
+                
                 rate.sleep()
             
 
