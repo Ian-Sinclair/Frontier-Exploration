@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+#Imports
 import rospy
 from geometry_msgs.msg import Point
 from nav_msgs.msg import OccupancyGrid
@@ -35,6 +35,11 @@ class frontierEvaluation():
     goalPos = None
     
     def __init__(self):
+        """
+        Constructor setting up a node, action client, tf listener, publishers, and subscribers. 
+        It also calls the main function. Note that I decided to have a main program running
+        simultaneously to the subscriber callback to improve performance. 
+        """        
         self.init_node()
         self.init_action_client()
         self.init_listener()
@@ -43,19 +48,39 @@ class frontierEvaluation():
         self.main_program()
     
     def init_node(self):
+        """
+        Initializes a node called explorer to support frontier exploration. 
+        """        
         rospy.init_node("explorer")
     
     def init_subscriber(self):
+        """
+        Initializes a subscriber using rospy that takes in the map as an occupancy grid. 
+        """
         sub = rospy.Subscriber("map", OccupancyGrid, self.callback)
         #rospy.spin()
     
     def init_publishers(self):
+        """
+        Initializes several publishers for different tasks throughout the file. 
+        """        
+        #Publishes markers indicating obstacle growing.
         self.pub = rospy.Publisher("/expansion", Marker, queue_size=1, latch=True)
+        #Publishes an occupancy grid to show the frontiers
         self.grid_pub = rospy.Publisher("/frontiers_map", OccupancyGrid, queue_size=1, latch=True)
-        self.centroids_pub = rospy.Publisher("/centroids", Marker, queue_size=1, latch=True)
+        #Publishes a marker array showing frontier clusters
         self.frontiers_pub = rospy.Publisher("/visualization_marker_array", MarkerArray, queue_size=1, latch=True)
+        #Publishes markers indicating the centroids of the frontier clusters. 
+        self.centroids_pub = rospy.Publisher("/centroids", Marker, queue_size=1, latch=True)
     
     def init_listener(self, source="map", target="base_footprint"):
+        """
+        Creates a tf listener and obtains the transformation data using the tfBuffer class variable. 
+
+        Args:
+            source (str, optional): Starting reference frame. Defaults to "map".
+            target (str, optional): Target reference from for transformation. Defaults to "base_footprint".
+        """        
         try:
             listener = tf2_ros.TransformListener(frontierEvaluation.tfBuffer)
             trans = frontierEvaluation.tfBuffer.lookup_transform(source, target, rospy.Time())
@@ -66,10 +91,21 @@ class frontierEvaluation():
             #continue
     
     def init_action_client(self):
+        """
+        Creates an action client with the move base action in order to send goals to the robot. 
+        """        
         self.client = actionlib.SimpleActionClient("move_base", MoveBaseAction)
         self.client.wait_for_server()
     
     def coordinate_callback_thread(self, x, y, z):
+        """
+
+
+        Args:
+            x (_type_): _description_
+            y (_type_): _description_
+            z (_type_): _description_
+        """        
         tol = 0.5
      #   dx = abs(x-frontierEvaluation.pos.position.x)
       #  dy = abs(y-frontierEvaluation.pos.position.y)
@@ -297,7 +333,9 @@ class frontierEvaluation():
             sys.exit("Rospy shut down.")
         
         elif len(set(frontierEvaluation.cache["cluster"])) == 0:
-            print("Congrats! All centroids were explored!")
+            print("Congrats! All centroids were explored! Returning to the origin....")
+            self.coordinate_callback_thread(0, 0, 0)
+            self.client.wait_for_result()
             sys.exit("Exiting the program. ")
     
     def callback(self, occupancy_grid):
@@ -352,7 +390,3 @@ class frontierEvaluation():
 
 if __name__ == "__main__":
     f = frontierEvaluation()
-
-    
-
-
