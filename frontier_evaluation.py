@@ -78,7 +78,6 @@ class frontierEvaluation():
     def init_listener(self, source="map", target="base_footprint"):
         """
         Creates a tf listener and obtains the transformation data using the tfBuffer class variable. 
-
         Args:
             source (str, optional): Starting reference frame. Defaults to "map".
             target (str, optional): Target reference from for transformation. Defaults to "base_footprint".
@@ -101,14 +100,12 @@ class frontierEvaluation():
     
     def coordinate_callback_thread(self, x, y, z):
         """
-
-
         Args:
             x (_type_): _description_
             y (_type_): _description_
             z (_type_): _description_
         """        
-        tol = 0.5
+#        tol = 0.05
      #   dx = abs(x-frontierEvaluation.pos.position.x)
       #  dy = abs(y-frontierEvaluation.pos.position.y)
       #  d = math.sqrt(dx**2 + dy**2)
@@ -118,8 +115,8 @@ class frontierEvaluation():
         try:
             pose = Pose()
 
-            pose.position.x = x+tol
-            pose.position.y = y+tol
+            pose.position.x = x
+            pose.position.y = y
             pose.position.z = z
             pose.orientation.w = 1.0
 
@@ -198,8 +195,8 @@ class frontierEvaluation():
             marker = createMarkers(points=points, indx=c, action=0, ns="frontiers", color=colors[c], scale=0.1, style=7)
             markers.markers.append(marker)
 
-            xc = sum(sub_df[0])/len(sub_df[0])
-            yc = sum(sub_df[1])/len(sub_df[1])
+            xc = int(sum(sub_df[0])/len(sub_df[0]))
+            yc = int(sum(sub_df[1])/len(sub_df[1]))
             centroid_x += [xc]*len(sub_df)
             centroid_y += [yc]*len(sub_df)
 #            frontierEvaluation.cache["centroid_x"] += [xc]*len(sub_df)
@@ -255,8 +252,8 @@ class frontierEvaluation():
             (x+1, y-1), (x+2, y-1), (x+3, y-1), (x+1, y-2), (x+2, y-2), (x+3, y-2),
             (x+1, y-3), (x+2, y-3), (x+3, y-3)
         ]
-
-        for i in range(9):
+        print(x)
+        for i in range(3):
             if grid[x+i][y] == 100:
                 return False
             if grid[x-i][y] == 100:
@@ -268,7 +265,7 @@ class frontierEvaluation():
         return True
     
     def findPoint(self, x, y, grid):
-        for i in range(5):
+        for i in range(15):
             rx = random.randint(1, 20)
             ry = random.randint(1, 20)
             if self.habitability(rx, ry, grid):
@@ -296,6 +293,7 @@ class frontierEvaluation():
             #if type(frontierEvaluation.frontiersGrid) != type(None):
 #            goalPoint = (frontierEvaluation.cache.iloc[0]["centroid_x"], frontierEvaluation.cache.iloc[0]["centroid_y"], 30)
             goalPoint = (goals[0][0], goals[0][1], 30)
+            print(goals)
 #            goalPoint = getPointArray([goalPoint], frontierEvaluation.occ_grid)[0]
  #           print(goalPoint)
  #           goalMarker = createMarkers(points=[goalPoint], indx=200, action=0, ns="goal_marker", color=[255, 0, 0], scale=0.3, style=7)
@@ -308,15 +306,17 @@ class frontierEvaluation():
 
             #Sending goal:
             print("sending goal...")
-            if self.habitability(goalPoint.x, goalPoint.y, frontierEvaluation.grid):
+            if self.habitability(goalPoint[0], goalPoint[1], frontierEvaluation.grid):
                 goalPoint = getPointArray([goalPoint], frontierEvaluation.occ_grid)[0]
-                self.coordinate_callback_thread(goalPoint[0], goalPoint[1], goalPoint[2])
+                self.coordinate_callback_thread(goalPoint.x, goalPoint.y, goalPoint.z)
+                goalMarker = createMarkers(points=[goalPoint], indx=200, action=0, ns="goal_marker", color=[255, 30, 200], scale=0.3, style=7)
             else:
                 #Find a habitable point
-                x, y = self.findPoint(goalPoint.x, goalPoint.y, frontierEvaluation.grid)
+                x, y = self.findPoint(goalPoint[0], goalPoint[1], frontierEvaluation.grid)
                 if x:
                     goalPoint = getPointArray([goalPoint], frontierEvaluation.occ_grid)[0]
                     self.coordinate_callback_thread(goalPoint.x, goalPoint.y, goalPoint.z)
+                    goalMarker = createMarkers(points=[goalPoint], indx=200, action=0, ns="goal_marker", color=[255, 30, 200], scale=0.3, style=7)
                 else:
                     print("Goal is unreachable. ")
                     goals.pop(0)
@@ -324,8 +324,8 @@ class frontierEvaluation():
             #Waiting for result
             result = None
             rate = rospy.Rate(1.0)
-            
-            while result is None and not rospy.is_shutdown():
+            visibility = False
+            while result is None and not rospy.is_shutdown() and not visibility:
                 #Deleting:
                 m = Marker(action=3)
                 self.pub.publish(m)
@@ -341,6 +341,9 @@ class frontierEvaluation():
                 self.frontiers_pub.publish(frontierEvaluation.frontier_markers)
                 self.centroids_pub.publish(frontierEvaluation.centroids)
                 self.centroids_pub.publish(goalMarker)
+                if frontierEvaluation.cache["distance"].iloc[0] < 0.15:
+                    goals.pop(0)
+                    visibility = True
                 
                 #Getting result
                 result = self.client.get_result()
@@ -377,9 +380,9 @@ class frontierEvaluation():
             print("setting up")
             frontierEvaluation.grid = formatGrid(occupancy_grid)
 
-            locs = getObjects(grid)
-            frontierEvaluation.grid = grow(grid, locs)
-            frontierEvaluation.locs = getObjects(grid)
+            locs = getObjects(frontierEvaluation.grid)
+            frontierEvaluation.grid = grow(frontierEvaluation.grid, locs)
+            frontierEvaluation.locs = getObjects(frontierEvaluation.grid)
  #           points = getPointArray(locs, occupancy_grid)
 #            markers = createMarkers(points=points, indx=50, action=0, ns="objects", scale=0.03)
 #            self.pub.publish(markers)
