@@ -25,12 +25,13 @@ warnings.filterwarnings("ignore")
 
 class frontierExplorer():
     #Do stuff here (:
-    df = pd.Dataframe({"x": [], "y": [], "cluster": [], "centroid_x": [], "centroid_y": [], "distance": []})
+    df = pd.DataFrame({"x": [], "y": [], "cluster": [], "centroid_x": [], "centroid_y": [], "distance": []})
     markers = {"frontiers": None, "centroids": None, "obstacles": None, "goal": None}
     grid = None
+    curr_data = []
     occupancy = None
     tfBuffer = tf2_ros.Buffer()
-    currentPosition = Pose()
+    currentPosition = None
     centroids = []
 
     def __init__(self):
@@ -38,7 +39,7 @@ class frontierExplorer():
         self.init_action_client()
         self.init_publishers()
         self.init_subscriber()
-   #     self.main_program()
+        self.main_program()
     
     def init_node(self):
         rospy.init_node("explorer")
@@ -56,7 +57,7 @@ class frontierExplorer():
     def init_listener(self):
         listener = tf2_ros.TransformListener(frontierExplorer.tfBuffer)
         try:
-            trans = frontierExplorer.tfBuffer.lookup_transfor("map", "base_footprint", rospy.Time(0))
+            trans = frontierExplorer.tfBuffer.lookup_transform("map", "base_footprint", rospy.Time(0))
             frontierExplorer.currentPosition = trans.transform.translation
         except:
             rospy.Rate(10.0).sleep()
@@ -73,13 +74,14 @@ class frontierExplorer():
         pose.position.z = z
         pose.orientation.w = 1.0
 
+        listener = tf2_ros.TransformListener(frontierExplorer.tfBuffer)
         while not rospy.is_shutdown():
             try:
                 trans = frontierExplorer.tfBuffer.lookup_transform("base_footprint", "map", rospy.Time(0))
                 break
             except:
                 print("tf listener didn't work")
-                raise
+                continue
             
         tfPose = PoseStamped()
         tfPose.pose = pose
@@ -88,8 +90,8 @@ class frontierExplorer():
         new_pose = do_transform_pose(tfPose, trans)
 
         goal = MoveBaseGoal()
-        goal.target.header.frame_id = "base_footprint"
-        goal.target_pose.pose = new_pose
+        goal.target_pose.header.frame_id = "base_footprint"
+        goal.target_pose.pose = new_pose.pose
         
         self.client.send_goal(goal)
     
@@ -101,7 +103,7 @@ class frontierExplorer():
         frontiers["cluster"] = clusters
         frontiers = frontiers[frontiers["cluster"] != -1]
         frontiers = frontiers.sort_values("cluster")
-        print(frontiers)
+#        print(frontiers)
         return frontiers
     
     def visualizeFrontiers(self, frontiersGrid, header, info):
@@ -110,50 +112,60 @@ class frontierExplorer():
     
     def calculateCentroid(self, points):
         xc = int(sum(points[0])/len(points[0]))
-        yc = int(sum(points[0])/len(points[0]))
+        yc = int(sum(points[1])/len(points[1]))
         return [xc, yc, 0]
     
-    def colorClusters(self):
-        clusters = list(set(frontierExplorer.df["cluster"]))
+    def colorClusters(self, df, occupancy_grid):
+        clusters = list(set(df["cluster"]))
         markers = MarkerArray()
         centers = []
-        distances = []
-        colors = []
-        
         palette = list(reversed(sns.color_palette("rainbow", len(clusters)).as_hex()))
+        colors = []
+        distances = []
+        centroid_x = []
+        centroid_y = []
+        self.init_listener()
         for p in palette:
             p = p.replace("#", "")
             colors.append(getRGB(p))
         
-        for c in range(len(clusters)+1):
-            sub_df = frontierExplorer.df[frontierExplorer.df["cluster"] == clusters[c]]
+        for c in range(len(clusters)):
+            sub_df = df[df["cluster"] == clusters[c]]
 
-            points = getPointArray([(x,y) for x,y in zip(sub_df[0], sub_df[1])], self.occupancy)
-            m = createMarkers(points=points, indx=c, action=0, ns="frontiers", color=colors[c], scale=0.1, style=7)
-            markers.markers.append(m)
+            points = getPointArray([(x,y) for x,y in zip(sub_df[0], sub_df[1])], occupancy_grid)
+            marker = createMarkers(points=points, indx=c, action=0, ns="frontiers", color=colors[c], scale=0.1, style=7)
+            markers.markers.append(marker)
 
-            center = self.calculateCentroid(sub_df)
-            frontierExplorer.df["centroid_x"] += [center[0]]*len(sub_df)
-            frontierExplorer.df["centroid_y"] += [center[1]]*len(sub_df)
+            xc = int(sum(sub_df[0])/len(sub_df[0]))
+            yc = int(sum(sub_df[1])/len(sub_df[1]))
+            centroid_x += [xc]*len(sub_df)
+            centroid_y += [yc]*len(sub_df)
 
+            center = [xc, yc, 20]
             centers.append(center)
-            centerPoint = getPointArray([center], self.occupancy)
+            centerPoint = getPointArray([center], occupancy_grid)
 
-            distances += [calculateDistance(frontierExplorer.currentPosition.position, centerPoint)]*len(sub_df)
+            distance = [calculateDistance(frontierExplorer.currentPosition, centerPoint)]*len(sub_df)
+            distances += distance
+
+        centers = getPointArray(centers, occupancy_grid)
+        centerMarker = createMarkers(points=centers, indx=c, action=0, ns="centroids", color=[255,255,255], scale=0.3, style=7)
         
-        centers = getPointArray(centers, self.occupancy)
-        centerMarker = createMarkers(points=centers, indx=0, action=0, ns="centroids", color=[255, 255, 255], scale=0.3, style=7)
-        frontierExplorer.markers["centroids"] = centerMarker
-        frontierExplorer.markers["frontiers"] = markers
+        df["distance"] = distances
+        df["centroid_x"] = centroid_x
+        df["centroid_y"] = centroid_y
+        df.sort_values("distance")
+        df.reset_index()
 
-        frontierExplorer.df["distance"] = distances
-        frontierExplorer.df.sort_values("distance")
+        return markers, centerMarker, df
     
-    def compareGrid(self, newGrid):
-        if sum(frontierExplorer.occupancy.data) != sum(newGrid.data):
-            frontierExplorer.occupancy = newGrid
-            return True
-        return False
+    def compareGrid(self, currentGrid, newGrid):
+ #       print(currentGrid)
+        print(sum(currentGrid))
+        if sum(currentGrid) == sum(newGrid):
+#            frontierExplorer.curr_data = newGrid
+            return False
+        return True
     
     def habitability(self, x, y, grid):
         for i in range(4):
@@ -163,24 +175,29 @@ class frontierExplorer():
     
     def findPoint(self, x, y, grid):
         for i in range(15):
-            dx = random.randint(1, 20)
-            dy = random.randint(1, 20)
-            if self.habitability(x+dx, y+dy, grid):
+            dx = random.randint(1, 5)
+            dy = random.randint(1, 5)
+            if self.habitability(x+dx, y+dy, grid) and 0<(x+dx)<384 and 0<(y+dy)<384:
+                print("-------------------------------------------------------")
+                print(dx)
+                print(dy)
                 return (x+dx, y+dy)
+            elif self.habitability(x-dx, y-dy, grid) and 0<(x-dx)<384 and 0<(y-dy)<384:
+                return (x-dx, y-dy)
         return None, None
     
     def main_program(self):
         while type(frontierExplorer.grid) == type(None) and not rospy.is_shutdown():
-            rospy.sleep(1)
+            rospy.sleep(0)
         
-        goals = list(set([(x,y) for x,y in zip(frontierExplorer.df["centroid_x"], frontierExplorer.df["centroid_y"], frontierExplorer.df["cluster"])]))
-
-        while len(goals) > 0  and not rospy.is_shutdown():
+        while len(set(frontierExplorer.df["cluster"])) > 0  and not rospy.is_shutdown():
             rospy.sleep(0.2)
+
+            goals = list(set([(x,y,c) for x,y,c in zip(frontierExplorer.df["centroid_x"], frontierExplorer.df["centroid_y"], frontierExplorer.df["cluster"])]))
 
             goalPoint = (goals[0][0], goals[0][1], 30)
             cluster = goals[0][2]
-            print(calculateDistance(frontierExplorer.currentPosition.position, goalPoint))
+#            print(calculateDistance(frontierExplorer.currentPosition.position, goalPoint))
 
             print("sending goal")
             if self.habitability(goalPoint[0], goalPoint[1], frontierExplorer.grid):
@@ -188,23 +205,26 @@ class frontierExplorer():
             else:
                 print("finding habitable goal")
                 x,y = self.findPoint(goalPoint[0], goalPoint[1], frontierExplorer.grid)
-                if x and y:
+                if x == None and y == None:
                     goalPoint = (x, y, 30)
                 else:
                     print("Goal is unreachable. ")
-                    frontierExplorer.df = frontierExplorer.df[frontierExplorer.df["cluster"] != cluster[0]]
-                    goals.pop(0)
+                    self.client.cancel_all_goals()
+#                    frontierExplorer.df = frontierExplorer.df[frontierExplorer.df["cluster"] != cluster]
+#                    goals.pop(0)
                     continue
-            goalPoint = getPointArray([goalPoint], frontierExplorer.occupancy)
+            goalPoint = getPointArray([goalPoint], frontierExplorer.occupancy)[0]
             self.coordinate_callback(goalPoint.x, goalPoint.y, goalPoint.z)
             frontierExplorer.markers["goal"] = createMarkers(points=[goalPoint], indx=0, action=0, ns="goal", color=[220, 90, 255], scale=0.3, style=7)
+            print(calculateDistance(frontierExplorer.currentPosition, goalPoint))
 
             result = None
-            rate = rospy.Rate(1.0)
+            rate = rospy.Rate(10.0)
+            
             while result is None and not rospy.is_shutdown():
                 #Deleting old markers
                 dm = Marker(action=3)
-                self.pub.publish(dm)
+                self.obs_pub.publish(dm)
                 self.centroids_pub.publish(dm)
                 self.goal_pub.publish(dm)
                 dArr = MarkerArray()
@@ -212,8 +232,8 @@ class frontierExplorer():
                 self.frontiers_pub.publish(dArr)
 
                 #Publishing markers
-                self.pub.publish(frontierExplorer.markers["obstacles"])
-                self.visualizeFrontiers(frontierExplorer.grid, frontierExplorer.occupancy.header, frontierExplorer.occupancy.info)
+                self.obs_pub.publish(frontierExplorer.markers["obstacles"])
+                self.visualizeFrontiers(frontierExplorer.fgrid, frontierExplorer.occupancy.header, frontierExplorer.occupancy.info)
                 self.frontiers_pub.publish(frontierExplorer.markers["frontiers"])
                 self.centroids_pub.publish(frontierExplorer.markers["centroids"])
                 self.goal_pub.publish(frontierExplorer.markers["goal"])
@@ -224,15 +244,29 @@ class frontierExplorer():
 
                 if self.client.get_state() == GoalStatus.SUCCEEDED:
                     rospy.loginfo("Goal found!")
-                    frontierExplorer.df = frontierExplorer.df[frontierExplorer.df["cluster"] != cluster[0]]
+                    frontierExplorer.df = frontierExplorer.df[frontierExplorer.df["cluster"] != cluster]
                     goals.pop(0)
-                    continue
+                    self.client.cancel_all_goals()
+                    break
                 
                 if self.client.get_state() == GoalStatus.ABORTED:
                     rospy.loginfo("Couldn't reach goal, moving to the next frontier.")
-                    frontierExplorer.df = frontierExplorer.df[frontierExplorer.df["cluster"] != cluster[0]]
+                    frontierExplorer.df = frontierExplorer.df[frontierExplorer.df["cluster"] != cluster]
                     goals.pop(0)
-                    continue
+                    self.client.cancel_all_goals()
+                    break
+                
+                #Getting position
+                self.init_listener()
+                print(frontierExplorer.currentPosition)
+                d = calculateDistance(frontierExplorer.currentPosition, goalPoint)
+                if d < 20:
+                    print("###\n####\n###\n###\n###\n####\n####\n####\n")
+                    print(d)
+                    frontierExplorer.df = frontierExplorer.df[frontierExplorer.df["cluster"] != cluster]
+   #                 goals.pop(0)
+                    self.client.cancel_all_goals()
+                    break
 
                 rate.sleep()
         
@@ -247,16 +281,29 @@ class frontierExplorer():
             sys.exit("Exiting the program.")
     
     def callback(self, occupancy_grid):
-        if self.compareGrid(occupancy_grid.data):
+        self.init_listener()
+        print(self.currentPosition)
+        frontierExplorer.occupancy = occupancy_grid
+        if self.compareGrid(frontierExplorer.curr_data, occupancy_grid.data):
+            frontierExplorer.curr_data = occupancy_grid.data
             grid = formatGrid(occupancy_grid)
-            locs = getObjects(frontierExplorer.grid)
-            grid = grow(frontierExplorer.grid, locs)
-            locs = getObjects(frontierExplorer.grid)
+            locs = getObjects(grid)
+            frontierExplorer.grid = grow(grid, locs)
+            locs = getObjects(grid)
             points = getPointArray(locs, occupancy_grid)
             frontierExplorer.markers["obstacles"] = createMarkers(points=points, indx=0, action=0, ns="objects", scale=0.01)
 
-            frontierExplorer.grid = findFrontiers(grid)
-            frontiers = getObjects(frontierExplorer.grid)
+            frontierExplorer.fgrid = findFrontiers(frontierExplorer.grid)
+            frontiers = getObjects(frontierExplorer.fgrid)
             df = self.dbscan(frontiers, 5, 8)
-            print(df)
 
+            frontierExplorer.markers["frontiers"], frontierExplorer.markers["centroids"], frontierExplorer.df = self.colorClusters(df, frontierExplorer.occupancy)
+          # print(frontierExplorer.df)
+           # frontier_markers, centroids, df = self.colorClusters()
+           # print(df)
+        
+        else:
+            print("No change recorded")
+
+if __name__ == "__main__":
+    f = frontierExplorer()
